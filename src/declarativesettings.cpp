@@ -19,7 +19,7 @@
 
 #include <unistd.h>
 #include <sys/types.h>
-#include <limits.h>
+#include <limits>
 
 DeclarativeSettings::DeclarativeSettings(QObject *parent)
     : QObject(parent)
@@ -118,9 +118,10 @@ bool DeclarativeSettings::verifyWritable(const QString &path)
 
 static qint64 getMaxBytes(Partition partition)
 {
+    const qint64 vfatMaxFileSize = std::numeric_limits<quint32>::max();
     qint64 realMaxBytes = partition.bytesAvailable();
-    if (partition.filesystemType() == "vfat" && partition.bytesAvailable() > static_cast<qint64>(ULONG_MAX))
-        realMaxBytes = ULONG_MAX;
+    if (partition.filesystemType() == "vfat" && partition.bytesAvailable() > vfatMaxFileSize)
+        realMaxBytes = vfatMaxFileSize;
 
     return realMaxBytes;
 }
