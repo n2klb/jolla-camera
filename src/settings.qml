@@ -4,9 +4,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import QtQuick 2.0
-import QtMultimedia 5.6
 import Nemo.Configuration 1.0
 import com.jolla.camera 1.0
+import org.sailfishos.PhotoApi 0.1
 
 SettingsBase {
     property alias mode: modeSettings
@@ -23,7 +23,7 @@ SettingsBase {
                                                  "viewfinderGrid": "none",
                                                  "exposureMode": Camera.ExposureManual,
                                                  "flash": ((globalSettings.captureMode == "image")
-                                                           && (globalSettings.position === Camera.BackFace)
+                                                           && (globalSettings.position === Camera.BackFacing)
                                                            ? Camera.FlashAuto : Camera.FlashOff)
                                              })
 
@@ -53,7 +53,7 @@ SettingsBase {
         property string deviceId
         property string previousBackFacingDeviceId
         property string frontFacingDeviceId
-        property int position: Camera.BackFace
+        property int position: Camera.BackFacing
         property string captureMode: "image"
 
         // Need to be defined by adaptation to enable multiple back cameras,
@@ -68,7 +68,7 @@ SettingsBase {
         property string videoCodec: "video/x-h264"
         property string mediaContainer: "video/quicktime, variant=(string)iso"
 
-        property int videoEncodingMode: CameraRecorder.AverageBitRateEncoding
+        //property int videoEncodingMode: CameraRecorder.AverageBitRateEncoding
         property int videoBitRate: 12000000
 
         property bool saveLocationInfo
@@ -78,23 +78,23 @@ SettingsBase {
         property bool colorFiltersAllowed: true
 
         property int exposureCompensation: 0
-        property int whiteBalance: CameraImageProcessing.WhiteBalanceAuto
+        property int whiteBalance: WhiteBalanceMode.AutoWhiteBalance
 
-        property var exposureCompensationValues: [ 4, 3, 2, 1, 0, -1, -2, -3, -4 ]
+        property var exposureCompensationValues: [4, 3, 2, 1, 0, -1, -2, -3, -4]
         property string viewfinderGrid: "none"
 
         ConfigurationGroup {
             id: modeSettings
 
             path: {
-                var position = globalSettings.position === Camera.FrontFace ? "front" : "back"
+                var position = globalSettings.position === Camera.FrontFacing ? "front" : "back"
                 return position + "/" + globalSettings.captureMode
             }
 
             property int iso: 0
-            property int flash: Camera.FlashOff
-            property int exposureMode: Camera.ExposureManual
-            property int meteringMode: Camera.MeteringMatrix
+            property int flash: FlashMode.FlashOff
+            // TODO: exposureMode
+            // TODO: support meteringMode
             property int timer: 0
             property int aspectRatio: -1
 
@@ -169,13 +169,9 @@ SettingsBase {
         }
     }
 
-    function meteringModeIcon(mode) {
-        switch (mode) {
-        case Camera.MeteringMatrix:  return "image://theme/icon-camera-metering-matrix"
-        case Camera.MeteringAverage: return "image://theme/icon-camera-metering-weighted"
-        case Camera.MeteringSpot:    return "image://theme/icon-camera-metering-spot"
-        }
-    }
+    // TODO: "image://theme/icon-camera-metering-matrix"
+    // TODO: "image://theme/icon-camera-metering-weighted"
+    // TODO: "image://theme/icon-camera-metering-spot"
 
     function exposureModeIcon(exposureMode) {
         switch (exposureMode) {
@@ -213,12 +209,12 @@ SettingsBase {
 
     function flashIcon(flash) {
         switch (flash) {
-        case Camera.FlashAuto:              return "image://theme/icon-camera-flash-automatic"
-        case Camera.FlashOff:               return "image://theme/icon-camera-flash-off"
-        case Camera.FlashTorch:
-        case Camera.FlashOn:                return "image://theme/icon-camera-flash-on"
+        case FlashMode.AutoFlash:              return "image://theme/icon-camera-flash-automatic"
+        case FlashMode.FlashOff:               return "image://theme/icon-camera-flash-off"
+        case FlashMode.FlashTorch:
+        case FlashMode.FlashOn:                return "image://theme/icon-camera-flash-on"
         // JB#54201: Red-eye mode does not work
-        // case Camera.FlashRedEyeReduction:   return "image://theme/icon-camera-flash-redeye"
+        // case FlashMode.AutoFlashRedeye:   return "image://theme/icon-camera-flash-redeye"
         default:
             return "" // not supported
         }
@@ -228,19 +224,19 @@ SettingsBase {
         switch (flash) {
         //: "Automatic camera flash mode"
         //% "Flash automatic"
-        case Camera.FlashAuto:       return qsTrId("camera_settings-la-flash-auto")
+        case FlashMode.AutoFlash:       return qsTrId("camera_settings-la-flash-auto")
         //: "Camera flash disabled"
         //% "Flash disabled"
-        case Camera.FlashOff:   return qsTrId("camera_settings-la-flash-off")
+        case FlashMode.FlashOff:        return qsTrId("camera_settings-la-flash-off")
         //: "Camera flash enabled"
         //% "Flash enabled"
-        case Camera.FlashOn:      return qsTrId("camera_settings-la-flash-on")
+        case FlashMode.FlashOn:         return qsTrId("camera_settings-la-flash-on")
         //: "Camera flash in torch mode"
         //% "Flash on"
-        case Camera.FlashTorch:   return qsTrId("camera_settings-la-flash-torch")
+        case FlashMode.FlashTorch:      return qsTrId("camera_settings-la-flash-torch")
         //: "Camera flash with red eye reduction"
         //% "Flash red eye"
-        case Camera.FlashRedEyeReduction: return qsTrId("camera_settings-la-flash-redeye")
+        case FlashMode.AutoFlashRedeye: return qsTrId("camera_settings-la-flash-redeye")
         default:
             return "" // not supported
         }
@@ -248,13 +244,13 @@ SettingsBase {
 
     function whiteBalanceIcon(balance) {
         switch (balance) {
-        case CameraImageProcessing.WhiteBalanceAuto:        return "image://theme/icon-camera-wb-automatic"
-        case CameraImageProcessing.WhiteBalanceSunlight:    return "image://theme/icon-camera-wb-sunny"
-        case CameraImageProcessing.WhiteBalanceCloudy:      return "image://theme/icon-camera-wb-cloudy"
-        // case CameraImageProcessing.WhiteBalanceShade:       return "image://theme/icon-camera-wb-shade"
-        // case CameraImageProcessing.WhiteBalanceSunset:      return "image://theme/icon-camera-wb-sunset"
-        case CameraImageProcessing.WhiteBalanceFluorescent: return "image://theme/icon-camera-wb-fluorecent"
-        case CameraImageProcessing.WhiteBalanceTungsten:    return "image://theme/icon-camera-wb-tungsten"
+        case WhiteBalanceMode.AutoWhiteBalance:             return "image://theme/icon-camera-wb-automatic"
+        case WhiteBalanceMode.Incandescent:                 return "image://theme/icon-camera-wb-tungsten"
+        case WhiteBalanceMode.Fluorescent:                  return "image://theme/icon-camera-wb-fluorecent"
+        case WhiteBalanceMode.Sunlight:                     return "image://theme/icon-camera-wb-sunny"
+        case WhiteBalanceMode.Cloudy:                       return "image://theme/icon-camera-wb-cloudy"
+        case WhiteBalanceMode.Twilight:                     return "image://theme/icon-camera-wb-sunset"
+        case WhiteBalanceMode.Shade:                        return "image://theme/icon-camera-wb-shade"
         default:
             return "" // not supported
         }
@@ -264,25 +260,25 @@ SettingsBase {
         switch (balance) {
         //: "Automatic white balance"
         //% "Automatic"
-        case CameraImageProcessing.WhiteBalanceAuto:        return qsTrId("camera_settings-la-wb-automatic")
-        //: "Sunny white balance"
-        //% "Sunny"
-        case CameraImageProcessing.WhiteBalanceSunlight:    return qsTrId("camera_settings-la-wb-sunny")
-        //: "Cloudy white balance"
-        //% "Cloudy"
-        case CameraImageProcessing.WhiteBalanceCloudy:      return qsTrId("camera_settings-la-wb-cloudy")
-        //: "Shade white balance"
-        //% "Shade"
-        case CameraImageProcessing.WhiteBalanceShade:       return qsTrId("camera_settings-la-wb-shade")
-        //: "Sunset white balance"
-        //% "Sunset"
-        case CameraImageProcessing.WhiteBalanceSunset:      return qsTrId("camera_settings-la-wb-sunset")
-        //: "Fluorecent white balance"
-        //% "Fluorecent"
-        case CameraImageProcessing.WhiteBalanceFluorescent: return qsTrId("camera_settings-la-wb-fluorecent")
+        case WhiteBalanceMode.AutoWhiteBalance:             return qsTrId("camera_settings-la-wb-automatic")
         //: "Tungsten white balance"
         //% "Tungsten"
-        case CameraImageProcessing.WhiteBalanceTungsten:    return qsTrId("camera_settings-la-wb-tungsten")
+        case WhiteBalanceMode.Incandescent:                 return qsTrId("camera_settings-la-wb-tungsten")
+        //: "Fluorecent white balance"
+        //% "Fluorecent"
+        case WhiteBalanceMode.Fluorescent:                  return qsTrId("camera_settings-la-wb-fluorecent")
+        //: "Sunny white balance"
+        //% "Sunny"
+        case WhiteBalanceMode.Sunlight:                     return qsTrId("camera_settings-la-wb-sunny")
+        //: "Cloudy white balance"
+        //% "Cloudy"
+        case WhiteBalanceMode.Cloudy:                       return qsTrId("camera_settings-la-wb-cloudy")
+        //: "Sunset white balance"
+        //% "Sunset"
+        case WhiteBalanceMode.Twilight:                     return qsTrId("camera_settings-la-wb-sunset")
+        //: "Shade white balance"
+        //% "Shade"
+        case WhiteBalanceMode.Shade:                        return qsTrId("camera_settings-la-wb-shade")
         default:
             return "" // not supported
         }

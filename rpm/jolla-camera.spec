@@ -55,6 +55,7 @@ Requires:  gstreamer1.0-plugins-bad
 Requires:  dconf
 Requires:  sailjail-launch-approval
 Requires:  mapplauncherd-booster-silica-qt5-media
+Requires:  photo-api-qt5
 Provides:  jolla-camera-settings > 1.2.30
 Obsoletes: jolla-camera-settings <= 1.2.30
 Provides:  jolla-camera-lockscreen > 1.2.30

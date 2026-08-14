@@ -6,10 +6,10 @@
 
 import QtQuick 2.1
 import QtQuick.Window 2.1
-import QtMultimedia 5.0
 import Amber.QrFilter 1.0
 import Sailfish.Silica 1.0
 import com.jolla.camera 1.0
+import org.sailfishos.PhotoApi 0.1
 
 ApplicationWindow {
     id: window
@@ -30,7 +30,7 @@ ApplicationWindow {
     initialPage: Component {
         CameraPage {
             id: cameraPage
-            viewfinder: videoOutput
+            viewfinder: viewfinderItem
             galleryView: Qt.resolvedUrl("LockedGalleryView.qml")
         }
     }
@@ -49,11 +49,12 @@ ApplicationWindow {
             color: "black"
         }
 
-        VideoOutput {
-            id: videoOutput
+        Viewfinder {
+            id: viewfinderItem
 
-            width: window.width
-            height: window.height
+            width: window.width * stream.width / stream.height
+            height: window.width
+            anchors.centerIn: parent
             // filters: [ qrFilter ]
         }
 

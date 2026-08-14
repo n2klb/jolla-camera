@@ -5,7 +5,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import QtQuick 2.4
-import QtMultimedia 5.4
 import Nemo.Policy 1.0
 import Nemo.Ngf 1.0
 import Nemo.Notifications 1.0
@@ -13,6 +12,7 @@ import org.nemomobile.systemsettings 1.0
 import Sailfish.Silica 1.0
 import Sailfish.Policy 1.0
 import com.jolla.camera 1.0
+import org.sailfishos.PhotoApi 0.1
 
 import "../settings"
 
@@ -33,22 +33,22 @@ FocusScope {
         case Orientation.LandscapeInverted: rotation = 270; break;
         }
 
-        return (720 + camera.orientation + rotation) % 360
+        return (720 - camera.info.orientation + rotation) % 360
     }
     property int captureOrientation
     property int pageRotation
     property bool orientationTransitionRunning
 
     property alias camera: camera
+    property alias videoRecorder: videoRecorder
     property QtObject viewfinder
 
-    readonly property bool recording: active && camera.videoRecorder.recorderState == CameraRecorder.RecordingState
+    readonly property bool recording: active && videoRecorder.recording
 
     property bool _unload
 
-    property bool touchFocusSupported: (camera.focus.focusMode == Camera.FocusAuto
-                                        || camera.focus.focusMode == Camera.FocusContinuous)
-                                       && camera.captureMode != Camera.CaptureVideo
+    property bool touchFocusSupported: camera.focusMode.value == FocusMode.AutoFocus
+                                        || camera.focusMode.value == FocusMode.ContinuousAutoFocus
 
     // not bound to focusTimer.running, restarting timer shouldn't exit tap focus mode temporarily and lose focus state
     property bool tapFocusActive
@@ -66,21 +66,16 @@ FocusScope {
 
     readonly property bool isPortrait: orientation == Orientation.Portrait
                                        || orientation == Orientation.PortraitInverted
-    readonly property bool effectiveActive: (active || recording) && _applicationActive && pageStack.depth < 2
+    readonly property bool effectiveActive: (active || recording) && (_startup || _applicationActive)
+                                            && pageStack.depth < 2
 
     readonly property bool _canCapture: {
-        switch (camera.captureMode) {
-            case Camera.CaptureStillImage: 
-                return camera.imageCapture.ready
-            case Camera.CaptureVideo:
-                return camera.videoRecorder.recorderStatus >= CameraRecorder.LoadedStatus 
-                    && captureOverlay != null && captureOverlay._recSecsRemaining > 0
-            default: 
-                return false
-        }
+        return camera.configured
+            && !videoMode || (captureOverlay != null && captureOverlay._recSecsRemaining > 0)
     }
 
     property bool _captureQueued
+    property bool capturePending
     property bool captureBusy
     onCaptureBusyChanged: {
         if (!captureBusy && _captureQueued) {
@@ -89,9 +84,9 @@ FocusScope {
         }
     }
 
-    property bool handleVolumeKeys: camera.imageCapture.ready
+    property bool handleVolumeKeys: camera.configured
                                     && keysResource.acquired
-                                    && camera.captureMode == Camera.CaptureStillImage
+                                    && !videoMode
                                     && !captureView._captureOnFocus
     property bool captureOnVolumeRelease
 
@@ -100,13 +95,14 @@ FocusScope {
             captureOnVolumeRelease = false
     }
 
-    readonly property bool _mirrorViewfinder: camera.position === Camera.FrontFace
-    readonly property bool _horizontalMirror: _mirrorViewfinder && camera.orientation % 180 == 0
-    readonly property bool _verticalMirror: _mirrorViewfinder && camera.orientation % 180 != 0
+    property bool videoMode: Settings.global.captureMode === "video"
+    property bool _startup: true
+
+    readonly property bool _mirrorViewfinder: camera.info.facing === Camera.FrontFacing
+    readonly property bool _horizontalMirror: _mirrorViewfinder && camera.info.orientation % 180 == 0
+    readonly property bool _verticalMirror: _mirrorViewfinder && camera.info.orientation % 180 != 0
 
     readonly property bool _applicationActive: Qt.application.state == Qt.ApplicationActive
-
-    readonly property string deviceId: Settings.deviceId
 
     property var captureOverlay: null
 
@@ -139,16 +135,22 @@ FocusScope {
 
     function setFocusPoint(point) {
         focusTimer.restart()
-        camera.unlock()
+        camera.unlock(Camera.AllLocks)
         tapFocusActive = true
-        camera.focus.customFocusPoint = point
-        camera.searchAndLock()
+	var rects = [[point.x - 0.15, point.y - 0.15, point.x + 0.15, point.y + 0.15, 1]]
+        camera.aeAreas.rects = rects
+        camera.afAreas.rects = rects
+        camera.awbAreas.rects = rects
+        camera.trigger(Camera.AllLocks)
     }
 
     function _resetFocus() {
         focusTimer.running = false
         tapFocusActive = false
-        camera.unlock()
+        camera.aeAreas.rects = []
+        camera.afAreas.rects = []
+        camera.awbAreas.rects = []
+        camera.unlock(Camera.AllLocks)
     }
 
     function _triggerCapture() {
@@ -159,13 +161,13 @@ FocusScope {
             captureTimer.reset()
         } else if (startRecordTimer.running) {
             startRecordTimer.running = false
-        } else if (camera.videoRecorder.recorderState == CameraRecorder.RecordingState) {
-            camera.videoRecorder.stop()
+        } else if (videoRecorder.recording) {
+            videoRecorder.stop()
         } else if (_canCapture) {
             if (Settings.mode.timer != 0) {
                 microphoneWarningNotification.publishIfNeeded()
                 captureTimer.restart()
-            } else if (camera.captureMode == Camera.CaptureStillImage) {
+            } else if (!videoMode) {
                 camera.captureImage()
             } else {
                 microphoneWarningNotification.publishIfNeeded()
@@ -174,68 +176,29 @@ FocusScope {
         }
     }
 
-
-    function _pickViewfinderResolution(resolutions, aspectRatio) {
-        var ratio
-        if (aspectRatio === CameraConfigs.AspectRatio_16_9) {
-            ratio = 16.0 / 9.0
-        } else { // CameraConfigs.AspectRatio_4_3
-            ratio = 4.0 / 3.0
+    function _openCamera(deviceId) {
+        _resetFocus()
+        camera.zoom.value = 1.0
+        captureTimer.reset()
+        Settings.global.deviceId = deviceId
+        camera.cameraId = deviceId
+        Settings.global.position = camera.info.facing
+        if (camera.info.facing === Camera.BackFacing) {
+            Settings.global.previousBackFacingDeviceId = deviceId
         }
 
-        if (resolutions && resolutions.length > 0) {
-            var selectedPixels = 0
-            var selectedIndex = 0
-            var targetWidth = Math.round(Screen.width * ratio)
-            for (var i = 0; i < resolutions.length; i++) {
-                var resolution = resolutions[i]
-                if (resolution.height === Screen.width && resolution.width === targetWidth) {
-                    return resolution
-                }
-            }
-            return _pickResolution(resolutions, aspectRatio)
-        }
-        return "-1x-1"
+        // Allow the camera to be closed when not needed
+        camera.cameraId = Qt.binding(function () {
+            return (effectiveActive || recording) ? deviceId : ""
+        })
     }
 
-    function aspectRatioToFraction(aspectRatio) {
-        var ratio = 4.0 / 3.0
-        if (aspectRatio === CameraConfigs.AspectRatio_16_9) {
-            ratio = 16.0 / 9.0
-        } else if (aspectRatio !== CameraConfigs.AspectRatio_4_3) {
-            console.warn("Unknown aspect ratio", aspectRatio)
-        }
-        return ratio
-    }
-
-    function _pickResolution(resolutions, aspectRatio) {
-        var ratio = aspectRatioToFraction(aspectRatio)
-
-        if (resolutions && resolutions.length > 0) {
-            var selectedPixels = 0
-            var selectedIndex = -1
-            for (var i = 0; i < resolutions.length; i++) {
-                var resolution = resolutions[i]
-                var pixels = resolution.width * resolution.height
-
-                if (Math.abs(ratio - resolution.width / resolution.height) < 0.05 && pixels > selectedPixels) {
-                    selectedPixels = pixels
-                    selectedIndex = i
-                }
-            }
-
-            if (selectedIndex >= 0) {
-                return resolutions[selectedIndex]
-            }
-        }
-        return "-1x-1"
-    }
 
     Notification {
         id: microphoneWarningNotification
 
         function publishIfNeeded() {
-            if (camera.captureMode == Camera.CaptureVideo && !AccessPolicy.microphoneEnabled) {
+            if (videoMode && !AccessPolicy.microphoneEnabled) {
                 microphoneWarningNotification.publish()
             }
         }
@@ -249,9 +212,10 @@ FocusScope {
 
     onEffectiveIsoChanged: {
         if (effectiveIso == 0) {
-            camera.exposure.setAutoIsoSensitivity()
+            camera.exposureMode.value = ExposureMode.AutoExposure
         } else {
-            camera.exposure.manualIso = Settings.mode.iso
+            camera.exposureMode.value = ExposureMode.PrioritizeSensitivity
+            camera.sensitivity.value = Settings.mode.iso
         }
     }
 
@@ -265,17 +229,6 @@ FocusScope {
         loadOverlay()
     }
 
-    onDeviceIdChanged: {
-        _resetFocus()
-        captureTimer.reset()
-        Settings.global.deviceId = Settings.deviceId
-        camera.deviceId = Settings.deviceId
-        Settings.global.position = camera.position
-        if (camera.position === Camera.BackFace) {
-            Settings.global.previousBackFacingDeviceId = camera.deviceId
-        }
-    }
-
     onEffectiveActiveChanged: {
         qrFilter.clearResult()
 
@@ -285,22 +238,34 @@ FocusScope {
         }
     }
 
+    on_ApplicationActiveChanged: {
+        if (_applicationActive) {
+            _startup = false
+        }
+    }
+
+    onVideoModeChanged: {
+        imageCapture.enabled = !videoMode
+        videoRecorder.enabled = videoMode
+        camera.configure()
+    }
+
     Timer {
         // prevent video recording continuing forever in the background
         running: recording && !effectiveActive
         interval: 60*1000
-        onTriggered: camera.videoRecorder.stop()
+        onTriggered: videoRecorder.stop()
     }
 
     Timer {
         interval: 1000
-        running: captureView._unload && (camera.cameraStatus === Camera.UnloadedStatus
-                                         || camera.cameraStatus === Camera.CameraError)
+        running: captureView._unload && !camera.active
         onTriggered: {
             captureView._unload = false
         }
     }
 
+    /*
     Timer {
         id: reactivateTimer
 
@@ -316,6 +281,7 @@ FocusScope {
             ++retryCounter
         }
     }
+    */
 
     NonGraphicalFeedback {
         id: shutterEvent
@@ -333,9 +299,9 @@ FocusScope {
         interval: 200
         onTriggered: {
             captureOverlay.writeMetaData()
-            camera.videoRecorder.record()
-            if (camera.videoRecorder.recorderState == CameraRecorder.RecordingState) {
-                camera.videoRecorder.recorderStateChanged.connect(camera._finishRecording)
+            videoRecorder.start()
+            if (videoRecorder.recording) {
+                videoRecorder.recordingChanged.connect(camera._finishRecording)
                 extensions.disableNotifications(captureView, true)
             }
         }
@@ -364,9 +330,9 @@ FocusScope {
         }
         ScriptAction {
             script: {
-                if (camera.captureMode == Camera.CaptureStillImage) {
-                    if (camera.focusPointMode == Camera.FocusPointAuto) {
-                        camera.searchAndLock()
+                if (!videoMode) {
+                    if (!tapFocusActive) {
+                        camera.trigger()
                     }
                     camera.captureImage()
                 } else {
@@ -392,66 +358,136 @@ FocusScope {
         }
     }
 
-    Connections {
-        target: CameraConfigs
-        onReadyChanged: {
-            // Reset flash torch mode if it's not supported
-            if (camera.captureMode === Camera.CaptureVideo
-                    && CameraConfigs.supportedFlashModes.indexOf(Settings.mode.flash) === -1) {
-                Settings.mode.flash = Camera.FlashOff
-            }
-        }
-    }
-
     Camera {
         id: camera
 
+        property bool hasCameraOnBothSides
+        property var backFacingCameras
+
+        Component.onCompleted: {
+            var hasFrontFace = false
+            var hasBackFace = false
+            var backCameras = []
+
+            for (var i = 0; i < CameraManager.availableCameras.length; i++) {
+                var device = CameraManager.availableCameras[i]
+                if (!hasFrontFace && device.facing === Camera.FrontFacing) {
+                    hasFrontFace = true
+                    Settings.global.frontFacingDeviceId = device.id
+                } else if (device.facing === Camera.BackFacing) {
+                    hasBackFace = true
+                    backCameras.push(device)
+                }
+            }
+
+            backFacingCameras = backCameras
+
+            hasCameraOnBothSides = hasFrontFace && hasBackFace
+
+            if (Settings.global.previousBackFacingDeviceId.length === 0 && backCameras.length > 0) {
+                Settings.global.previousBackFacingDeviceId = backCameras[0].deviceId
+            }
+
+            viewfinder.stream.camera = camera
+            _openCamera(Settings.deviceId)
+        }
+
+        onInitFailed: {
+            console.log("Failed to initialize camera", cameraId)
+        }
+
+        onConfigFailed: {
+            console.log("Failed to configure camera", cameraId)
+        }
+
+        onActiveChanged: {
+            if (active && captureOverlay) {
+                captureView.loaded()
+            }
+        }
+
+	aeCompensation.value: Settings.global.exposureCompensation / 2.0
+
+        focusMode.value: {
+            // Could expect that locking focus on auto or continous behaves the same, but
+            // continuous doesn't work as well.
+            if (tapFocusActive) {
+                return FocusMode.AutoFocus
+            } else if (focusMode.supported.indexOf(FocusMode.ContinuousAutoFocus) >= 0) {
+                return FocusMode.ContinuousAutoFocus
+            } else if (focusMode.supported.length > 0) {
+                return focusMode.supported[0]
+            } else {
+                return FocusMode.AutoFocus
+            }
+        }
+
+        focusMode.onValueChanged: {
+            unlockAutoFocus()
+        }
+
+        flashMode.value: Settings.mode.flash
+
+        whiteBalanceMode.value: Settings.global.whiteBalance
+
+        /*
+        exposure {
+            exposureMode: Settings.mode.exposureMode
+            meteringMode: Settings.mode.meteringMode
+        }
+        */
+
+        onCaptureDone: {
+            if (successful) {
+                var path = Settings.photoCapturePath('jpg')
+                imageCapture.saveFrame(path)
+                Settings.completePhoto(Qt.resolvedUrl(path))
+            }
+            camera.unlockAutoFocus()
+            captureBusy = false
+        }
+
+        onShutter: {
+            if (true /* camera.exposureMode.value != ExposureMode.HDR */) {
+                shutterEvent.play()
+                captureAnimation.start()
+                // re-enable the shutter button
+                capturePending = false
+            } else {
+                flashAnimation.start()
+            }
+        }
+
+        // TODO: remove AutoFocus from the name, since this should also lock AE
         function lockAutoFocus() {
             captureOverlay.closeMenus()
             // timed capture locks when timer triggers
-            if (camera.captureMode == Camera.CaptureStillImage
-                    && focus.focusMode != Camera.FocusInfinity
-                    && focus.focusMode != Camera.FocusHyperfocal
-                    && camera.lockStatus == Camera.Unlocked
-                    && focus.focusPointMode == Camera.FocusPointAuto
-                    && Settings.mode.timer == 0) {
-                camera.searchAndLock()
+            if (!tapFocusActive && Settings.mode.timer == 0) {
+                camera.trigger(Camera.AllLocks)
             }
         }
 
         function unlockAutoFocus() {
-            if (camera.captureMode == Camera.CaptureStillImage
-                    && focus.focusMode != Camera.FocusInfinity
-                    && focus.focusMode != Camera.FocusHyperfocal
-                    && focus.focusPointMode == Camera.FocusPointAuto) {
-                camera.unlock()
-            }
-        }
-
-        function captureImage() {
-            if (camera.lockStatus != Camera.Searching) {
-                _completeCapture()
-            } else {
-                captureView._captureOnFocus = true
-            }
+            camera.unlock(Camera.AllLocks)
         }
 
         function record() {
-            videoRecorder.outputLocation = Settings.videoCapturePath("mp4")
+            videoRecorder.outputPath = Settings.videoCapturePath("mp4")
             startRecordTimer.running = true
             recordStartEvent.play()
         }
 
-        function _completeCapture() {
+        function captureImage() {
             if (captureBusy) {
                 _captureQueued = true
                 return
             }
 
+            capturePending = true
             captureBusy = true
             captureOverlay.writeMetaData()
 
-            camera.imageCapture.captureToLocation(Settings.photoCapturePath('jpg'))
+            imageCapture.takePicture()
 
             if (focusTimer.running) {
                 focusTimer.restart()
@@ -459,20 +495,18 @@ FocusScope {
         }
 
         function _finishRecording() {
-            if (videoRecorder.recorderState == CameraRecorder.StoppedState) {
-                videoRecorder.recorderStateChanged.disconnect(_finishRecording)
+            if (!videoRecorder.recording) {
+                videoRecorder.recordingChanged.disconnect(_finishRecording)
                 extensions.disableNotifications(captureView, false)
-                var finalUrl = Settings.completeCapture(videoRecorder.outputLocation)
+                var finalUrl = Settings.completeCapture(Qt.resolvedUrl(videoRecorder.outputPath))
                 if (finalUrl != "") {
-                    captureView.recordingStopped(finalUrl, videoRecorder.mediaContainer)
+                    captureView.recordingStopped(finalUrl, videoRecorder.containerType)
                 }
                 recordStopEvent.play()
             }
         }
 
-        property bool hasCameraOnBothSides
-        property var backFacingCameras
-
+        /*
         // On some adaptations media booster makes camera initialization fail
         // and Camera must be reloaded, try to do that once when that happens.
         // Wait until the Camera item has completed and activation has been
@@ -619,38 +653,6 @@ FocusScope {
             videoEncodingMode: Settings.global.videoEncodingMode
             videoBitRate: Settings.global.videoBitRate
         }
-        focus {
-            // could expect that locking focus on auto or continous behaves the same, but
-            // continuous doesn't work as well
-            focusMode: {
-                // The cameraStatus doesn't really matter as a precondition but incorporating
-                // it ensures the binding is reevaluated when the status changes and the desired
-                // focus mode is assigned. Otherwise QtMultimedia may reject a mode as unsupported
-                // and default to auto because the binding was evaluated in the unloaded state and
-                // real support was unknown at that time.
-                if (camera.cameraStatus == Camera.ActiveStatus && tapFocusActive) {
-                    return Camera.FocusAuto
-                } else if (CameraConfigs.supportedFocusModes.indexOf(Camera.FocusContinuous) >= 0) {
-                    return Camera.FocusContinuous
-                } else if (CameraConfigs.supportedFocusModes.length > 0) {
-                    return CameraConfigs.supportedFocusModes[0]
-                } else {
-                    return Camera.FocusAuto
-                }
-            }
-            focusPointMode: tapFocusActive ? Camera.FocusPointCustom : Camera.FocusPointAuto
-        }
-        flash.mode: Settings.mode.flash
-        imageProcessing.whiteBalanceMode: {
-            var hasFilter = camera.imageProcessing.colorFilter !== CameraImageProcessing.ColorFilterNone
-            return hasFilter ? CameraImageProcessing.WhiteBalanceAuto : Settings.global.whiteBalance
-        }
-
-        exposure {
-            exposureMode: Settings.mode.exposureMode
-            exposureCompensation: Settings.global.exposureCompensation / 2.0
-            meteringMode: Settings.mode.meteringMode
-        }
 
         viewfinder {
             resolution: {
@@ -677,13 +679,123 @@ FocusScope {
                 captureView._captureOnFocus = false
                 camera._completeCapture()
             }
+        } */
+    }
+
+    function aspectRatioToFraction(aspectRatio) {
+        var ratio = 4.0 / 3.0
+        if (aspectRatio === CameraConfigs.AspectRatio_16_9) {
+            ratio = 16.0 / 9.0
+        } else if (aspectRatio !== CameraConfigs.AspectRatio_4_3) {
+            console.warn("Unknown aspect ratio", aspectRatio)
+        }
+        return ratio
+    }
+
+    function _pickImageResolution(configs, aspectRatio) {
+        var ratio = aspectRatioToFraction(aspectRatio)
+
+        var bestWidth = 0
+
+        for (var i = 0; i < configs.length; i++) {
+            var cfg = configs[i]
+            var minWidth = Math.max(cfg.width.min, cfg.height.min * ratio)
+            var maxWidth = Math.min(cfg.width.max, cfg.height.max * ratio)
+            if ((maxWidth - minWidth) > -0.5) {
+                if (maxWidth > bestWidth) {
+                    bestWidth = maxWidth
+                }
+            }
+        }
+
+        if (bestWidth == 0) {
+            return {}
+        }
+
+        return {
+            width: bestWidth,
+            height: bestWidth / ratio
+        }
+    }
+
+    function _pickViewfinderResolution(configs, aspectRatio) {
+        var ratio = aspectRatioToFraction(aspectRatio)
+        var idealWidth = Screen.width * ratio
+
+        var bestDistanceLow = Infinity
+        var bestDistanceHigh
+        var bestWidth
+        var bestCfg
+
+        for (var i = 0; i < configs.length; i++) {
+            var cfg = configs[i]
+            var minWidth = Math.max(cfg.width.min, cfg.height.min * ratio)
+            var maxWidth = Math.min(cfg.width.max, cfg.height.max * ratio)
+            if ((maxWidth - minWidth) > -0.5) {
+                var distanceLow = Math.max(idealWidth - maxWidth, 0)
+                var distanceHigh = Math.max(minWidth - idealWidth, 0)
+                var compare = (distanceLow - bestDistanceLow)
+                        || (distanceHigh - bestDistanceHigh)
+                        || (bestCfg.maxFps.max - cfg.maxFps.max)
+                        || (cfg.minFps.min - bestCfg.minFps.min)
+                if (compare < 0) {
+                    bestDistanceLow = distanceLow
+                    bestDistanceHigh = distanceHigh
+                    bestWidth = Math.min(Math.max(minWidth, width), maxWidth)
+                    bestCfg = cfg
+                }
+            }
+        }
+
+        if (!bestCfg) {
+            return {}
+        }
+
+        return {
+            width: bestWidth,
+            height: bestWidth / ratio,
+            minFps: bestCfg.minFps.min,
+            maxFps: bestCfg.maxFps.max
         }
     }
 
     Binding {
-        target: CameraConfigs
-        property: "camera"
-        value: camera
+        target: viewfinder.stream
+        property: "configuration"
+        value: _pickViewfinderResolution(viewfinder.stream.recommendedConfigurations, Settings.aspectRatio)
+    }
+
+    ImageCapture {
+        id: imageCapture
+
+        camera: captureView.camera
+        enabled: !videoMode
+        configuration: _pickImageResolution(recommendedConfigurations, Settings.aspectRatio)
+    }
+
+    VideoCapture {
+        id: videoRecorder
+
+        camera: captureView.camera
+        enabled: videoMode
+        //configuration: _pickImageResolution(recommendedConfigurations, Settings.aspectRatio)
+
+        //audioChannels: 2
+        //audioSampleRate: Settings.global.audioSampleRate
+        audioType: Settings.global.audioCodec
+        videoType: Settings.global.videoCodec
+        containerType: Settings.global.mediaContainer
+
+        //videoEncodingMode: Settings.global.videoEncodingMode
+        videoBitrate: Settings.global.videoBitRate
+    }
+
+    Connections {
+        target: Settings
+
+        onDeviceIdChanged: {
+            _openCamera(Settings.deviceId)
+        }
     }
 
     DeviceInfo {
@@ -692,12 +804,6 @@ FocusScope {
 
     CameraExtensions {
         id: extensions
-    }
-
-    Binding {
-        target: captureView.viewfinder
-        property: "source"
-        value: camera
     }
 
     Rectangle {
@@ -826,7 +932,7 @@ FocusScope {
                 })
                 overlayFadeIn.start()
                 overlayIncubator = null
-                if (camera.cameraState == Camera.ActiveState && captureOverlay) {
+                if (camera.active && captureOverlay) {
                     captureView.loaded()
                 }
             } else if (status == Component.Error) {
@@ -848,8 +954,8 @@ FocusScope {
         id: focusArea
 
         width: Screen.width
-               * camera.viewfinder.resolution.width
-               / camera.viewfinder.resolution.height
+               * viewfinder.stream.width
+               / viewfinder.stream.height
         height: Screen.width
 
         rotation: -captureView.viewfinderOrientation
@@ -861,18 +967,18 @@ FocusScope {
         opacity: captureOverlay ? 1.0 - captureOverlay.settingsOpacity : 1.0
 
         Repeater {
-            model: camera.focus.focusZones
+            model: camera.afAreas.rects
             delegate: Item {
                 x: focusArea.width * (captureView._horizontalMirror
-                                      ? 1 - area.x - area.width
-                                      : area.x)
+                                      ? 1 - modelData[2]
+                                      : modelData[0])
                 y: focusArea.height * (captureView._verticalMirror
-                                      ? 1 - area.y - area.height
-                                      : area.y)
-                width: focusArea.width * area.width
-                height: focusArea.height * area.height
+                                      ? 1 - modelData[3]
+                                      : modelData[1])
+                width: focusArea.width * (modelData[2] - modelData[0])
+                height: focusArea.height * (modelData[3] - modelData[1])
 
-                visible: status != Camera.FocusAreaUnused && camera.focus.focusPointMode == Camera.FocusPointCustom
+		visible: tapFocusActive
 
                 Rectangle {
                     width: Math.min(parent.width, parent.height)
@@ -881,7 +987,7 @@ FocusScope {
                     radius: width / 2
                     border {
                         width: Math.round(Theme.pixelRatio * 2)
-                        color: status == Camera.FocusAreaFocused
+			color: true /* status == Camera.FocusAreaFocused */
                                ? (Theme.colorScheme == Theme.LightOnDark
                                   ? Theme.highlightColor
                                   : Theme.highlightFromColor(Theme.highlightColor, Theme.LightOnDark))
@@ -962,8 +1068,8 @@ FocusScope {
 
     Permissions {
         enabled: captureView.activeFocus
-                    && camera.captureMode == Camera.CaptureStillImage
-                    && camera.cameraState == Camera.ActiveState
+                    && !videoMode
+                    && camera.active
         autoRelease: true
         applicationClass: "camera"
 

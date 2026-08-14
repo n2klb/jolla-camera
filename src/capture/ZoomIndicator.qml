@@ -10,6 +10,7 @@ Item {
     id: indicator
 
     property real zoom
+    property real minimumZoom
     property real maximumZoom
 
     property color color: Theme.colorScheme == Theme.LightOnDark
@@ -60,8 +61,10 @@ Item {
         anchors {
             verticalCenter: line.verticalCenter
             horizontalCenter: line.left
-            horizontalCenterOffset: indicator.maximumZoom > 1
-                        ? line.width * (indicator.zoom - 1) / (indicator.maximumZoom - 1)
+            horizontalCenterOffset: indicator.maximumZoom > indicator.minimumZoom
+                        ? line.width
+                            * (indicator.zoom - indicator.minimumZoom)
+                            / (indicator.maximumZoom - indicator.minimumZoom)
                         : line.width / 2
         }
 

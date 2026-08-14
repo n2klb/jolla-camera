@@ -10,7 +10,7 @@ import com.jolla.camera 1.0
 ExpandingMenu {
     id: menu
 
-    model: CameraConfigs.supportedWhiteBalanceModes
+    model: camera.whiteBalanceMode.supported
     delegate: ExpandingMenuItem {
         persistentHighlight: true
         settings: Settings.global

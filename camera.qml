@@ -9,6 +9,7 @@ import QtMultimedia 5.0
 import Amber.QrFilter 1.0
 import Sailfish.Silica 1.0
 import com.jolla.camera 1.0
+import org.sailfishos.PhotoApi 0.1
 import "pages"
 
 ApplicationWindow {
@@ -27,7 +28,21 @@ ApplicationWindow {
 
     initialPage: Component {
         MainCameraPage {
-            viewfinder: videoOutput
+            viewfinder: viewfinderItem
+        }
+    }
+
+    Viewfinder {
+        id: viewfinderItem
+
+        z: -1
+        width: window.width * stream.width / stream.height
+        height: window.width
+        anchors.centerIn: parent
+
+        Behavior on y {
+            enabled: !galleryVisible
+            NumberAnimation { duration: 150; easing.type: Easing.InOutQuad }
         }
     }
 
@@ -38,21 +53,6 @@ ApplicationWindow {
         z: -1
         color: "black"
         visible: (pageStack.depth < 2 && !pageStack.busy) || !galleryActive
-    }
-
-    VideoOutput {
-        id: videoOutput
-
-        z: -1
-        width: window.width
-        height: window.height
-
-        Behavior on y {
-            enabled: !galleryVisible
-            NumberAnimation { duration: 150; easing.type: Easing.InOutQuad }
-        }
-
-        filters: [ qrFilter ]
     }
 
     QrFilter {

@@ -5,7 +5,6 @@
 
 import QtQuick 2.0
 import QtQuick.Window 2.0 as QuickWindow
-import QtMultimedia 5.4
 import QtPositioning 5.1
 import QtSensors 5.0
 import Nemo.Time 1.0
@@ -14,6 +13,7 @@ import Nemo.Notifications 1.0
 import org.nemomobile.systemsettings 1.0
 import Sailfish.Silica 1.0
 import com.jolla.camera 1.0
+import org.sailfishos.PhotoApi 0.1
 
 import "../settings"
 
@@ -27,7 +27,7 @@ SettingsOverlay {
 
     property int _recordingDuration: clock.enabled ? ((clock.time - _startTime) / 1000) : 0
     property int _recSecsRemaining: {
-        var totalBitRate = (camera.videoRecorder.videoBitRate + camera.videoRecorder.audioBitRate) * 1.05
+        var totalBitRate = (videoRecorder.videoBitrate + videoRecorder.audioBitrate) * 1.05
         var maxDuration = Settings.storageMaxFileSize * 8 / totalBitRate
         return maxDuration - _recordingDuration
     }
@@ -77,9 +77,12 @@ SettingsOverlay {
     }
 
     function writeMetaData() {
-        captureView.captureOrientation = camera.position === Camera.FrontFace
-                       ? (720 + camera.orientation - _pictureRotation) % 360
-                       : (720 + camera.orientation + _pictureRotation) % 360
+        // TODO
+        return
+
+        captureView.captureOrientation = camera.info.facing === Camera.FrontFacing
+                       ? (720 + camera.info.orientation - _pictureRotation) % 360
+                       : (720 + camera.info.orientation + _pictureRotation) % 360
 
         // Camera documentation says dateTimeOriginal should be used but at the moment CameraBinMetaData uses only
         // date property (which the documentation doesn't even list)
@@ -161,17 +164,11 @@ SettingsOverlay {
     topButtonRowHeight: Screen.sizeCategory >= Screen.Large ? Theme.itemSizeLarge : Theme.itemSizeSmall
     deviceToggleEnabled: !captureView.captureBusy
 
-    onPinchStarted: {
-        // We're not getting notifications when the maximumDigitalZoom changes,
-        // so update the value here.
-        zoomIndicator.maximumZoom = camera.maximumDigitalZoom
-    }
-
     onPinchUpdated: {
-        camera.digitalZoom = Math.max(1, Math.min(
-                    camera.digitalZoom + ((camera.maximumDigitalZoom - 1)
+        camera.zoom.value = Math.max(camera.zoom.min, Math.min(
+                    camera.zoom.value + ((camera.zoom.max - 1)
                                           * ((pinch.scale / Math.abs(pinch.previousScale) - 1))),
-                    camera.maximumDigitalZoom))
+                    camera.zoom.max))
         zoomIndicator.show()
     }
 
@@ -234,15 +231,14 @@ SettingsOverlay {
     shutter: CameraButton {
         id: captureButton
 
-        property bool canStopVideo: startRecordTimer.running
-                                    || camera.videoRecorder.recorderState == CameraRecorder.RecordingState
+        property bool canStopVideo: startRecordTimer.running || videoRecorder.recording
 
         z: settingsOverlay.inButtonLayout ? 1 : 0
         size: Theme.iconSizeMedium
         anchors.centerIn: parent
         background.visible: icon.opacity < 1.0
         enabled: captureView._canCapture
-                    && !captureView._captureOnFocus
+                    && !captureView.capturePending
 
         onPressed: camera.lockAutoFocus()
         onReleased: {
@@ -269,7 +265,7 @@ SettingsOverlay {
 
             source: canStopVideo
                     ? "image://theme/icon-camera-video-shutter-off"
-                    : (camera.captureMode == Camera.CaptureVideo
+                    : (captureView.videoMode
                        ? "image://theme/icon-camera-video-shutter-on"
                        : "image://theme/icon-camera-shutter")
         }
@@ -322,7 +318,7 @@ SettingsOverlay {
             if (captureView.recording)
                 return _recSecsRemaining < 300 || (_recordingDuration > 120 && _recSecsRemaining < 3600) ? 1.0 : 0.0
             else 
-                return camera.captureMode == Camera.CaptureVideo && _recSecsRemaining < 300 ? 1.0 : 0.0
+                return captureView.videoMode && _recSecsRemaining < 300 ? 1.0 : 0.0
         }
         Behavior on opacity { FadeAnimator {} }
         text: {
@@ -352,7 +348,7 @@ SettingsOverlay {
         id: clock
 
         updateFrequency: WallClock.Second
-        enabled: camera.videoRecorder.recorderState == CameraRecorder.RecordingState
+        enabled: videoRecorder.recording
         onEnabledChanged: {
             if (enabled) {
                 _startTime = clock.time
@@ -360,7 +356,7 @@ SettingsOverlay {
         }
         onTimeChanged: {
             if (enabled && _recSecsRemaining <= 0 && camera) {
-                camera.videoRecorder.stop()
+                videoRecorder.stop()
             }
         }
     }
@@ -425,8 +421,9 @@ SettingsOverlay {
             horizontalCenter: parent.horizontalCenter
         }
 
-        zoom: camera.digitalZoom
-        maximumZoom: camera.maximumDigitalZoom
+        zoom: camera.zoom.value
+        minimumZoom: camera.zoom.min
+        maximumZoom: camera.zoom.max
     }
 
     Notification {

@@ -4,10 +4,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import QtQuick 2.4
-import QtMultimedia 5.6
 import Sailfish.Silica 1.0
 import com.jolla.camera 1.0
 import Nemo.Configuration 1.0
+import org.sailfishos.PhotoApi 0.1
 
 PinchArea {
     id: overlay
@@ -142,7 +142,6 @@ PinchArea {
     CameraDeviceToggle {
         onSelected: {
             Settings.deviceId = deviceId
-            camera.digitalZoom = 1.0
         }
 
         parent: {
@@ -165,9 +164,9 @@ PinchArea {
                  && Settings.deviceId !== Settings.global.frontFacingDeviceId
                  && !inButtonLayout
         orientation: overlay.isPortrait ? Qt.Horizontal : Qt.Vertical
-        enabled: camera.cameraStatus === Camera.ActiveStatus
+        enabled: camera.active // camera.cameraStatus === Camera.ActiveStatus
         model: camera.backFacingCameras
-        currentDeviceId: camera.deviceId
+        currentDeviceId: camera.cameraId
 
         x: {
             if (_overlayPosition.backCameraToggle === Qt.AlignLeft) {
@@ -197,13 +196,11 @@ PinchArea {
         enabled: overlay.deviceToggleEnabled
 
         onClicked: {
-            if (Settings.global.position === Camera.BackFace) {
+            if (Settings.global.position === Camera.BackFacing) {
                 Settings.deviceId = Settings.global.frontFacingDeviceId
             } else {
                 Settings.deviceId = Settings.global.previousBackFacingDeviceId
             }
-
-            camera.digitalZoom = 1.0
         }
     }
 
@@ -470,7 +467,7 @@ PinchArea {
                 width: overlay._menuWidth
                 title: Settings.flashText
                 header: upperHeader
-                model: CameraConfigs.supportedFlashModes
+                model: camera.flashMode.supported
                 delegate: SettingsMenuItem {
                     settings: Settings.mode
                     property: "flash"
@@ -502,10 +499,27 @@ PinchArea {
             SettingsMenu {
                 id: isoMenu
 
+		active: model.length > 1
                 width: overlay._menuWidth
                 title: Settings.isoText
                 header: upperHeader
-                model: CameraConfigs.supportedIsoSensitivities
+                model: {
+                    var supported = [0] // auto
+                    var iso = camera.sensitivity.min
+                    var range = camera.sensitivity.max / iso
+                    var step = Math.max(2, Math.round(Math.pow(range, 1 / 4)))
+
+                    while (iso < camera.sensitivity.max) {
+                        supported.push(iso)
+                        iso *= step
+                    }
+
+                    if (supported.indexOf(camera.sensitivity.max) <= 0) {
+                        supported.push(camera.sensitivity.max)
+                    }
+
+                    return supported
+                }
                 delegate: SettingsMenuItemBase {
                     settings: Settings.mode
                     property: "iso"
@@ -576,7 +590,7 @@ PinchArea {
         Item {
             width: overlay._menuWidth
             height: width
-            visible: CameraConfigs.supportedFlashModes.length > 0
+            visible: camera.flashMode.supported.length > 0
             y: flashMenu.currentItem != null ? topRow.dragY(flashMenu.currentItem.y) : 0
 
             Icon {
@@ -605,7 +619,7 @@ PinchArea {
             width: overlay._menuWidth
             height: width
             y: topRow.dragY(isoMenu.currentItem ? isoMenu.currentItem.y : 0)
-            visible: CameraConfigs.supportedIsoSensitivities.length > 1
+            visible: isoMenu.active
 
             IsoItem {
                 anchors.centerIn: parent
@@ -663,9 +677,9 @@ PinchArea {
                 horizontalCenter: exposureSlider.horizontalCenter
                 centerIn: null
             }
-            enabled: !Settings.global.colorFiltersEnabled
-                     || camera.imageProcessing.colorFilter === CameraImageProcessing.ColorFilterNone
 
+            //enabled: !Settings.global.colorFiltersEnabled
+            //         || camera.imageProcessing.colorFilter === CameraImageProcessing.ColorFilterNone
             alignment: exposureSlider.alignment
             opacity: enabled ? 1.0 - settingsOpacity : 0.0
             spacing: Theme.paddingMedium
@@ -713,9 +727,11 @@ PinchArea {
         property bool ready: CameraConfigs.supportedColorFilters.length > 0
                              && Settings.global.colorFiltersEnabled && Settings.global.colorFiltersAllowed
         property var allowedFilters: [
+            /*
             CameraImageProcessing.ColorFilterNone, CameraImageProcessing.ColorFilterGrayscale,
             CameraImageProcessing.ColorFilterSepia, CameraImageProcessing.ColorFilterPosterize,
             CameraImageProcessing.ColorFilterWhiteboard, CameraImageProcessing.ColorFilterBlackboard
+            */
         ]
         property var supportedFilters: {
             var filters = []
@@ -740,7 +756,7 @@ PinchArea {
             } else {
                 var leftControlWidth = x
                 var rightControlWidth = buttonAnchorCR.width + buttonAnchorCR.largeMargin
-                var resolution = camera.viewfinder.resolution.width
+                var resolution = viewfinder.stream
                 var viewfinderWidth = Screen.width * (resolution.width > 0 ? resolution.width/resolution.height : 1.2)
                 return Math.min(Screen.height - rightControlWidth, viewfinderWidth) - leftControlWidth
             }

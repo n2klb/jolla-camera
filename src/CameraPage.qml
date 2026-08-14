@@ -5,7 +5,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 import QtQuick 2.0
-import QtMultimedia 5.4
 import Nemo.KeepAlive 1.2
 import Sailfish.Silica 1.0
 import Sailfish.Media 1.0
@@ -67,7 +66,7 @@ Page {
         readonly property bool transitioning: moving || returnToCaptureModeTimeout.running
 
         function resetZoom() {
-            captureView.camera.digitalZoom = 1.0
+            captureView.camera.zoom.value = 1.0
         }
 
         function returnToCaptureMode() {
@@ -156,7 +155,7 @@ Page {
 
                 Binding {
                     target: captureView.viewfinder
-                    property: "x"
+                    property: "anchors.horizontalCenterOffset"
                     value: captureView.isPortrait
                            ? captureView._viewfinderPosition
                            : 0
@@ -164,13 +163,28 @@ Page {
 
                 Binding {
                     target: captureView.viewfinder
-                    property: "y"
+                    property: "anchors.verticalCenterOffset"
                     value: !captureView.isPortrait
                            ? captureView._viewfinderPosition
                              + (page.orientation == Orientation.Landscape
                                 ? captureView.viewfinderOffset : -captureView.viewfinderOffset)
                            : (page.orientation == Orientation.Portrait ? captureView.viewfinderOffset
                                                                        : -captureView.viewfinderOffset)
+                }
+
+                Binding {
+                    target: captureView.viewfinder
+                    property: "rotation"
+                    value: captureView.camera.info.orientation
+                }
+
+                Binding {
+                    target: captureView.viewfinder
+                    property: "transform"
+                    value: Scale {
+                        xScale: captureView._mirrorViewfinder ? -1 : 1
+                        origin.x: captureView.viewfinder.width / 2
+                    }
                 }
             }
         }
@@ -204,6 +218,6 @@ Page {
 
     DisplayBlanking {
         preventBlanking: (galleryLoader.item && galleryLoader.item.playing)
-                         || captureView.camera.videoRecorder.recorderState == CameraRecorder.RecordingState
+                         || captureView.videoRecorder.recording
     }
 }

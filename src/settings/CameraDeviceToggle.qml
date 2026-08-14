@@ -34,7 +34,7 @@ Grid {
         id: repeater
 
         SilicaItem {
-            highlighted: mouseArea.pressed && mouseArea.containsMouse || modelData.deviceId === root.currentDeviceId
+            highlighted: mouseArea.pressed && mouseArea.containsMouse || modelData.id === root.currentDeviceId
             width: Theme.itemSizeExtraSmall
             height: Theme.itemSizeExtraSmall
             visible: cameraLabel.text != ''
@@ -44,7 +44,7 @@ Grid {
 
                 anchors.fill: parent
                 onClicked: {
-                    root.selected(modelData.deviceId)
+                    root.selected(modelData.id)
                 }
             }
 
